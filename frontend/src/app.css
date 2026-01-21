@@ -1,0 +1,625 @@
+:root {
+  --bg-color: #1a1b26;
+  --sidebar-bg: #16161e;
+  --header-bg: #1f2335;
+  --bg-secondary: #1f2335;
+  --text-primary: #a9b1d6;
+  --text-secondary: #787c99;
+  --accent-color: #7aa2f7;
+  --accent-secondary: #bb9af7;
+  --border-color: #24283b;
+  --hover-bg: #292e42;
+  --success: #9ece6a;
+  --warning: #e0af68;
+  --error: #f7768e;
+  --primary-color: var(--accent-color);
+  --secondary-color: var(--text-secondary);
+  
+  /* Code block specific */
+  --code-bg: #1e1e1e;
+  --code-header-bg: #2d2d2d;
+  --code-text: #d4d4d4;
+  --input-bg: var(--bg-color);
+
+  --scrollbar-track: var(--bg-secondary);
+  --scrollbar-thumb: #3b4261;
+  --scrollbar-thumb-hover: #4a5178;
+  --scrollbar-size: 10px;
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --bg-color: #ffffff;
+  --sidebar-bg: #f8f9fa;
+  --header-bg: #ffffff;
+  --bg-secondary: #ffffff;
+  --text-primary: #2c3e50;
+  --text-secondary: #6c757d;
+  --accent-color: #0d6efd;
+  --accent-secondary: #6f42c1;
+  --border-color: #dee2e6;
+  --hover-bg: #f1f3f5;
+  --success: #198754;
+  --warning: #ffc107;
+  --error: #dc3545;
+  
+  --code-bg: #f8f9fa;
+  --code-header-bg: #e9ecef;
+  --code-text: #212529;
+  --input-bg: #ffffff;
+
+  --scrollbar-track: var(--hover-bg);
+  --scrollbar-thumb: #c1c7d0;
+  --scrollbar-thumb-hover: #aab2bd;
+  --scrollbar-size: 10px;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg-color: #ffffff;
+    --sidebar-bg: #f8f9fa;
+    --header-bg: #ffffff;
+    --bg-secondary: #ffffff;
+    --text-primary: #2c3e50;
+    --text-secondary: #6c757d;
+    --accent-color: #0d6efd;
+    --accent-secondary: #6f42c1;
+    --border-color: #dee2e6;
+    --hover-bg: #f1f3f5;
+    --success: #198754;
+    --warning: #ffc107;
+    --error: #dc3545;
+    
+    --code-bg: #f8f9fa;
+    --code-header-bg: #e9ecef;
+    --code-text: #212529;
+    --input-bg: #ffffff;
+
+    --scrollbar-track: var(--hover-bg);
+    --scrollbar-thumb: #c1c7d0;
+    --scrollbar-thumb-hover: #aab2bd;
+    --scrollbar-size: 10px;
+    color-scheme: light;
+  }
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 999px;
+  border: 2px solid var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+}
+
+.App {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  background-color: var(--bg-color);
+}
+
+.MainLayout {
+  display: flex;
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
+}
+
+.Sidebar {
+  width: 260px;
+  background-color: var(--sidebar-bg);
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.MainContent {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background-color: var(--bg-color);
+}
+
+.Header {
+  height: 48px;
+  background-color: var(--header-bg);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  justify-content: space-between;
+}
+
+.Workspace {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.WorkspaceContainer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.WorkspaceMain {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.TerminalPanel {
+  height: 260px;
+  border-top: 1px solid var(--border-color);
+  background-color: var(--bg-secondary);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.TerminalHeader {
+  height: 40px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background-color: var(--sidebar-bg);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.TerminalOutput {
+  flex: 1;
+  padding: 12px;
+  overflow: auto;
+  background-color: var(--bg-secondary);
+}
+
+.ExplorerPanel {
+  width: 250px;
+  background-color: var(--sidebar-bg);
+  border-right: 1px solid var(--border-color);
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.EditorPanel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background-color: var(--bg-color);
+  border-right: 1px solid var(--border-color);
+}
+
+.ChatPanel {
+  width: 400px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex-shrink: 0;
+  background-color: var(--bg-color);
+}
+
+.ChatItem {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.ChatItem:hover {
+  background-color: var(--hover-bg);
+}
+
+.ChatItem.active {
+  background-color: var(--hover-bg);
+  border-left: 3px solid var(--accent-color);
+}
+
+.FileNode {
+  padding: 4px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.FileNode:hover {
+  background-color: var(--hover-bg);
+}
+
+.Button {
+  background-color: var(--accent-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.Button:hover {
+  opacity: 0.9;
+}
+.HeaderRight {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.StatusIndicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ControlButton {
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  color: white;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.ControlButton:hover {
+  opacity: 0.85;
+  transform: translateY(-1px);
+}
+
+.ControlButton:active {
+  transform: translateY(0);
+}
+
+/* Custom LLM Config Styles */
+.CustomLLMConfig {
+  background-color: var(--bg-color);
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.CustomLLMConfig h2 {
+  color: var(--text-primary);
+  margin: 0 0 20px 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.CustomLLMConfig h3 {
+  color: var(--text-primary);
+  margin: 0 0 16px 0;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+.CustomLLMConfig h4 {
+  color: var(--text-primary);
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+/* Form Styles */
+.CustomLLMConfig form {
+  background-color: var(--sidebar-bg);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+  border: 1px solid var(--border-color);
+}
+
+.CustomLLMConfig label {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.CustomLLMConfig input,
+.CustomLLMConfig select,
+.CustomLLMConfig textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: inherit;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+.CustomLLMConfig input:focus,
+.CustomLLMConfig select:focus,
+.CustomLLMConfig textarea:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(122, 162, 247, 0.2);
+  background-color: var(--hover-bg);
+}
+
+.CustomLLMConfig input::placeholder,
+.CustomLLMConfig textarea::placeholder {
+  color: var(--text-secondary);
+}
+
+.CustomLLMConfig input:disabled {
+  background-color: var(--sidebar-bg);
+  color: var(--text-secondary);
+  cursor: not-allowed;
+}
+
+/* Select Styles */
+.CustomLLMConfig select {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23787c99' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px;
+  padding-right: 40px;
+}
+
+.CustomLLMConfig select option {
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  padding: 8px;
+}
+
+/* Button Styles */
+.CustomLLMConfig button {
+  border: none;
+  border-radius: 6px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.CustomLLMConfig button[type="submit"] {
+  background-color: var(--accent-color);
+  color: white;
+}
+
+.CustomLLMConfig button[type="submit"]:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.CustomLLMConfig button[type="button"] {
+  background-color: var(--text-secondary);
+  color: white;
+}
+
+.CustomLLMConfig button[type="button"]:hover {
+  opacity: 0.9;
+}
+
+.CustomLLMConfig button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.CustomLLMConfig button:not(:disabled):active {
+  transform: translateY(0);
+}
+
+/* Special Button Styles */
+.CustomLLMConfig .Button {
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.CustomLLMConfig .Button:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.CustomLLMConfig .Button:active {
+  transform: translateY(0);
+}
+
+/* Remove Button */
+.CustomLLMConfig .remove-button {
+  background-color: var(--error);
+  color: white;
+  padding: 8px 12px;
+  font-size: 12px;
+}
+
+.CustomLLMConfig .remove-button:hover {
+  opacity: 0.9;
+}
+
+/* Add Header Button */
+.CustomLLMConfig .add-header-button {
+  background-color: var(--accent-color);
+  color: white;
+  padding: 8px 16px;
+  font-size: 14px;
+}
+
+.CustomLLMConfig .add-header-button:hover {
+  opacity: 0.9;
+}
+
+/* Service Card Styles */
+.CustomLLMConfig .service-card {
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background-color: var(--bg-color);
+  transition: all 0.2s ease;
+}
+
+.CustomLLMConfig .service-card:hover {
+  border-color: var(--accent-color);
+  box-shadow: 0 2px 8px rgba(122, 162, 247, 0.1);
+}
+
+.CustomLLMConfig .service-card h4 {
+  margin: 0 0 8px 0;
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.CustomLLMConfig .service-card p {
+  margin: 4px 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.CustomLLMConfig .service-card strong {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* Test Result Styles */
+.CustomLLMConfig .test-result {
+  padding: 16px;
+  margin-bottom: 20px;
+  border-radius: 8px;
+  border: 1px solid;
+}
+
+.CustomLLMConfig .test-result.success {
+  background-color: rgba(158, 206, 106, 0.1);
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.CustomLLMConfig .test-result.error {
+  background-color: rgba(247, 118, 142, 0.1);
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.CustomLLMConfig .test-result h4 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.CustomLLMConfig .test-result p {
+  margin: 4px 0;
+  font-size: 14px;
+}
+
+.CustomLLMConfig .test-result strong {
+  font-weight: 600;
+}
+
+/* Panel Styles */
+.CustomLLMConfig .panel {
+  background-color: var(--sidebar-bg);
+  border-radius: 8px;
+  padding: 20px;
+  border: 1px solid var(--border-color);
+}
+
+.CustomLLMConfig .panel h3 {
+  margin: 0 0 16px 0;
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* Header Management */
+.CustomLLMConfig .header-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+
+.CustomLLMConfig .header-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.CustomLLMConfig .header-row input:first-child {
+  flex: 1;
+}
+
+.CustomLLMConfig .header-row input:nth-child(2) {
+  flex: 2;
+}
+
+/* Checkbox Styles */
+.CustomLLMConfig input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent-color);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .CustomLLMConfig {
+    padding: 16px;
+  }
+  
+  .CustomLLMConfig form {
+    padding: 16px;
+  }
+  
+  .CustomLLMConfig .header-row {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .CustomLLMConfig .header-row input {
+    width: 100%;
+  }
+}
