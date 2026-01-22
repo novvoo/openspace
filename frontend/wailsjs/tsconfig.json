@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noImplicitAny": false,
+    "skipLibCheck": true
+  },
+  "files": [
+    "../src/wails.d.ts"
+  ],
+  "include": [
+    "**/*.js",
+    "**/*.d.ts"
+  ]
+}
+

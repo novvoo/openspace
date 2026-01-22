@@ -40,6 +40,13 @@ declare global {
                     SubmitPrompt(): Promise<string>;
                     ClearPrompt(): Promise<string>;
                     OpenCurrentDirectory(): Promise<void>;
+                    PickDirectory(): Promise<string>;
+                    SetWorkspaceDirectory(path: string): Promise<void>;
+                    RevealInExplorer(path: string): Promise<void>;
+                    CreateFile(path: string): Promise<void>;
+                    CreateFolder(path: string): Promise<void>;
+                    RenamePath(oldPath: string, newPath: string): Promise<void>;
+                    DeletePath(path: string): Promise<void>;
                     StartOpenSpaceServer(): Promise<void>;
                     StopOpenSpaceServer(): Promise<void>;
                 };

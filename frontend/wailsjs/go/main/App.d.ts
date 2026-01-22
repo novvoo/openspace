@@ -7,9 +7,15 @@ export function AddCustomLLMService(arg1:string):Promise<string>;
 
 export function ClearPrompt():Promise<string>;
 
+export function CreateFile(arg1:string):Promise<void>;
+
+export function CreateFolder(arg1:string):Promise<void>;
+
 export function CreateSession(arg1:string,arg2:string):Promise<string>;
 
 export function DeleteCustomLLMService(arg1:string):Promise<string>;
+
+export function DeletePath(arg1:string):Promise<void>;
 
 export function DeleteSession(arg1:string):Promise<string>;
 
@@ -67,7 +73,13 @@ export function ListProviders():Promise<string>;
 
 export function OpenCurrentDirectory():Promise<void>;
 
+export function PickDirectory():Promise<string>;
+
+export function RenamePath(arg1:string,arg2:string):Promise<void>;
+
 export function RestartServer():Promise<void>;
+
+export function RevealInExplorer(arg1:string):Promise<void>;
 
 export function RunCommand(arg1:string):Promise<string>;
 
@@ -82,6 +94,8 @@ export function SendCustomLLMMessage(arg1:string,arg2:string,arg3:string):Promis
 export function SendMessage(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function SendMessageAsync(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
+
+export function SetWorkspaceDirectory(arg1:string):Promise<void>;
 
 export function StartOpenSpaceServer():Promise<void>;
 

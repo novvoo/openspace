@@ -47,6 +47,9 @@ type Service struct {
 	// Cancellation support
 	cancelFuncs    map[string]context.CancelFunc
 	cancelFuncsMux sync.Mutex
+
+	workspaceDir    string
+	workspaceDirMux sync.RWMutex
 }
 
 func splitProviderModel(model string) (string, string) {
@@ -99,6 +102,39 @@ func NewService() *Service {
 	service.loadConfig()
 
 	return service
+}
+
+func (s *Service) GetWorkspaceDirectory() string {
+	s.workspaceDirMux.RLock()
+	dir := strings.TrimSpace(s.workspaceDir)
+	s.workspaceDirMux.RUnlock()
+	if dir == "" {
+		wd, _ := os.Getwd()
+		return wd
+	}
+	return dir
+}
+
+func (s *Service) SetWorkspaceDirectory(dir string) error {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return fmt.Errorf("directory cannot be empty")
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("path is not a directory")
+	}
+	s.workspaceDirMux.Lock()
+	s.workspaceDir = abs
+	s.workspaceDirMux.Unlock()
+	return nil
 }
 
 // loadSessions loads sessions from file
@@ -807,10 +843,7 @@ func (s *Service) UpdateConfig(configData string) (map[string]interface{}, error
 
 // GetCurrentProject returns current project info
 func (s *Service) GetCurrentProject() (map[string]interface{}, error) {
-	dir, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
+	dir := s.GetWorkspaceDirectory()
 
 	return map[string]interface{}{
 		"path": dir,
@@ -825,10 +858,7 @@ func (s *Service) GetProjects() ([]map[string]interface{}, error) {
 
 // GetVCSInfo returns VCS information
 func (s *Service) GetVCSInfo() (map[string]interface{}, error) {
-	wd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
+	wd := s.GetWorkspaceDirectory()
 
 	// Try to get git branch
 	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
@@ -852,8 +882,8 @@ func (s *Service) GetPath() (map[string]interface{}, error) {
 	home, _ := os.UserHomeDir()
 	config := filepath.Join(home, ".openspace")
 	state := filepath.Join(config, "state")
-	worktree, _ := os.Getwd()
-	directory, _ := os.Getwd()
+	worktree := s.GetWorkspaceDirectory()
+	directory := worktree
 
 	return map[string]interface{}{
 		"home":      home,
@@ -867,13 +897,12 @@ func (s *Service) GetPath() (map[string]interface{}, error) {
 // GetFiles returns file list for a directory
 func (s *Service) GetFiles(path string) ([]map[string]interface{}, error) {
 	if path == "" {
-		path, _ = os.Getwd()
+		path = s.GetWorkspaceDirectory()
 	}
 
 	// Ensure path is absolute
 	if !filepath.IsAbs(path) {
-		wd, _ := os.Getwd()
-		path = filepath.Join(wd, path)
+		path = filepath.Join(s.GetWorkspaceDirectory(), path)
 	}
 
 	// Default ignore list (hardcoded for now, can be improved to read .gitignore)
@@ -950,6 +979,9 @@ func (s *Service) GetFileContent(path string) (map[string]interface{}, error) {
 	if path == "" {
 		return nil, fmt.Errorf("path parameter is required")
 	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(s.GetWorkspaceDirectory(), path)
+	}
 
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -970,8 +1002,7 @@ func (s *Service) SaveFileContent(path string, content string) error {
 
 	// Ensure path is absolute
 	if !filepath.IsAbs(path) {
-		wd, _ := os.Getwd()
-		path = filepath.Join(wd, path)
+		path = filepath.Join(s.GetWorkspaceDirectory(), path)
 	}
 
 	// Ensure directory exists
@@ -998,8 +1029,7 @@ func (s *Service) RunCommandWithCwdContext(ctx context.Context, command string, 
 		return CommandRunResult{}, fmt.Errorf("command parameter is required")
 	}
 
-	wd, _ := os.Getwd()
-
+	wd := s.GetWorkspaceDirectory()
 	baseDir := wd
 	if strings.TrimSpace(cwd) != "" {
 		baseDir = cwd
@@ -1196,7 +1226,7 @@ func (s *Service) FindFilesByNameContext(ctx context.Context, query string, file
 		return nil, fmt.Errorf("query parameter is required")
 	}
 
-	wd, _ := os.Getwd()
+	wd := s.GetWorkspaceDirectory()
 	results := []string{}
 
 	// Simple file search implementation
@@ -1243,7 +1273,7 @@ func (s *Service) FindText(pattern string) ([]map[string]interface{}, error) {
 		return nil, fmt.Errorf("pattern parameter is required")
 	}
 
-	wd, _ := os.Getwd()
+	wd := s.GetWorkspaceDirectory()
 	results := []map[string]interface{}{}
 
 	// Compile regex pattern
@@ -1299,7 +1329,7 @@ func (s *Service) FindSymbol(query string) ([]map[string]interface{}, error) {
 		return nil, fmt.Errorf("query parameter is required")
 	}
 
-	wd, _ := os.Getwd()
+	wd := s.GetWorkspaceDirectory()
 	results := []map[string]interface{}{}
 
 	// Simple symbol search - look for function definitions, variables, etc.

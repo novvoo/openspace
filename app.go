@@ -8,7 +8,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
+
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
@@ -384,10 +387,10 @@ func (a *App) AbortSession(sessionID string) (string, error) {
 	if sessionID == "" {
 		return "", fmt.Errorf("session ID cannot be empty")
 	}
-	
+
 	// Call service cancellation
 	a.service.CancelSession(sessionID)
-	
+
 	return `{"success": true}`, nil
 }
 
@@ -657,4 +660,118 @@ func (a *App) OpenCurrentDirectory() error {
 
 	fmt.Println("目录打开成功")
 	return nil
+}
+
+func (a *App) PickDirectory() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("app context not initialized")
+	}
+	dir, err := wailsruntime.OpenDirectoryDialog(a.ctx, wailsruntime.OpenDialogOptions{
+		Title: "选择文件夹",
+	})
+	if err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func (a *App) SetWorkspaceDirectory(path string) error {
+	return a.service.SetWorkspaceDirectory(path)
+}
+
+func (a *App) RevealInExplorer(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("path cannot be empty")
+	}
+	if !filepath.IsAbs(path) {
+		wd, _ := os.Getwd()
+		path = filepath.Join(wd, path)
+	}
+
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("explorer", "/select,", path)
+	case "darwin":
+		cmd = exec.Command("open", "-R", path)
+	case "linux":
+		cmd = exec.Command("xdg-open", filepath.Dir(path))
+	default:
+		return fmt.Errorf("unsupported OS: %s", runtime.GOOS)
+	}
+	return cmd.Start()
+}
+
+func (a *App) CreateFile(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("path cannot be empty")
+	}
+	if !filepath.IsAbs(path) {
+		wd, _ := os.Getwd()
+		path = filepath.Join(wd, path)
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("path already exists")
+	}
+	return os.WriteFile(path, []byte(""), 0644)
+}
+
+func (a *App) CreateFolder(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("path cannot be empty")
+	}
+	if !filepath.IsAbs(path) {
+		wd, _ := os.Getwd()
+		path = filepath.Join(wd, path)
+	}
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("path already exists")
+	}
+	return os.MkdirAll(path, 0755)
+}
+
+func (a *App) RenamePath(oldPath string, newPath string) error {
+	if strings.TrimSpace(oldPath) == "" || strings.TrimSpace(newPath) == "" {
+		return fmt.Errorf("paths cannot be empty")
+	}
+	if !filepath.IsAbs(oldPath) {
+		wd, _ := os.Getwd()
+		oldPath = filepath.Join(wd, oldPath)
+	}
+	if !filepath.IsAbs(newPath) {
+		wd, _ := os.Getwd()
+		newPath = filepath.Join(wd, newPath)
+	}
+	if _, err := os.Stat(oldPath); err != nil {
+		return fmt.Errorf("source does not exist")
+	}
+	if _, err := os.Stat(newPath); err == nil {
+		return fmt.Errorf("destination already exists")
+	}
+	if err := os.MkdirAll(filepath.Dir(newPath), 0755); err != nil {
+		return fmt.Errorf("failed to create destination directory: %w", err)
+	}
+	return os.Rename(oldPath, newPath)
+}
+
+func (a *App) DeletePath(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("path cannot be empty")
+	}
+	if !filepath.IsAbs(path) {
+		wd, _ := os.Getwd()
+		path = filepath.Join(wd, path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("path does not exist")
+	}
+	if info.IsDir() {
+		return os.RemoveAll(path)
+	}
+	return os.Remove(path)
 }

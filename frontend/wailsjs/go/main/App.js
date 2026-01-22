@@ -14,12 +14,24 @@ export function ClearPrompt() {
   return window['go']['main']['App']['ClearPrompt']();
 }
 
+export function CreateFile(arg1) {
+  return window['go']['main']['App']['CreateFile'](arg1);
+}
+
+export function CreateFolder(arg1) {
+  return window['go']['main']['App']['CreateFolder'](arg1);
+}
+
 export function CreateSession(arg1, arg2) {
   return window['go']['main']['App']['CreateSession'](arg1, arg2);
 }
 
 export function DeleteCustomLLMService(arg1) {
   return window['go']['main']['App']['DeleteCustomLLMService'](arg1);
+}
+
+export function DeletePath(arg1) {
+  return window['go']['main']['App']['DeletePath'](arg1);
 }
 
 export function DeleteSession(arg1) {
@@ -134,8 +146,20 @@ export function OpenCurrentDirectory() {
   return window['go']['main']['App']['OpenCurrentDirectory']();
 }
 
+export function PickDirectory() {
+  return window['go']['main']['App']['PickDirectory']();
+}
+
+export function RenamePath(arg1, arg2) {
+  return window['go']['main']['App']['RenamePath'](arg1, arg2);
+}
+
 export function RestartServer() {
   return window['go']['main']['App']['RestartServer']();
+}
+
+export function RevealInExplorer(arg1) {
+  return window['go']['main']['App']['RevealInExplorer'](arg1);
 }
 
 export function RunCommand(arg1) {
@@ -164,6 +188,10 @@ export function SendMessage(arg1, arg2, arg3, arg4) {
 
 export function SendMessageAsync(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SendMessageAsync'](arg1, arg2, arg3, arg4);
+}
+
+export function SetWorkspaceDirectory(arg1) {
+  return window['go']['main']['App']['SetWorkspaceDirectory'](arg1);
 }
 
 export function StartOpenSpaceServer() {
