@@ -1587,7 +1587,7 @@ func (s *Service) SummarizeSession(sessionID string, providerID string, modelID 
 				})
 
 				// Call LLM
-				summary, _, err := s.callLLMService(context.Background(), sessionID, serviceConfig, messages, model)
+				summary, _, err := s.callLLMService(context.Background(), sessionID, serviceConfig, messages, model, true)
 				if err == nil {
 					// Save summary to session
 					s.sessionMux.Lock()

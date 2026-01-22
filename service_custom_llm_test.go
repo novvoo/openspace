@@ -113,7 +113,7 @@ func TestCallLLMService_StoresSanitizedRequestHeaders(t *testing.T) {
 
 	_, rawTurns, err := s.callLLMService(context.Background(), "s1", cfg, []map[string]interface{}{
 		{"role": "user", "content": "hi"},
-	}, "gpt-test")
+	}, "gpt-test", true)
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}

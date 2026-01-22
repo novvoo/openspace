@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -26,6 +25,7 @@ type CustomLLMService struct {
 	Provider     string            `json:"provider"` // "openai", "anthropic", "ollama"
 	Enabled      bool              `json:"enabled"`
 	ContextLimit int               `json:"contextLimit,omitempty"` // Max context tokens (approx)
+	ToolCalling  string            `json:"toolCalling,omitempty"`
 }
 
 func sanitizeRequestHeaders(h http.Header) map[string][]string {
@@ -404,28 +404,23 @@ func (s *Service) sendLLMMessageInternal(ctx context.Context, sessionID string, 
 		// but keeping it helps the model know the context too.
 	}
 
+	toolMode := resolveToolCallingMode(serviceConfig)
+
 	systemPromptContent := `You are OpenSpace, a highly skilled software engineer with extensive knowledge in many programming languages, frameworks, best practices, and performance optimization.
 
 ====
 TOOL USE
 ====
-You have access to a set of tools. When you output one or more <tool_call> blocks, the tools will be executed automatically and you will receive the results in the next message as a "Tool Results" user message.
+You have access to a set of tools. When you call tools, they will be executed automatically and you will receive the results in the next message as a "Tool Results" user message.
 
 Tool execution MUST follow this step-by-step loop:
 1) Understand user request and decide which tool(s) to use.
-2) Briefly state the intended tool(s) and the exact command/path/query you will run.
-3) Output ONLY the <tool_call> block(s) (no extra text after the last </tool_call>).
-4) Read the returned Tool Results.
+2) Call the tool(s) with exact, minimal arguments.
+3) Read the returned Tool Results.
+4) Continue until you have enough information or changes are made.
 5) Summarize findings and provide the final answer.
 
-To use a tool, you must output one or more valid XML blocks like this:
-
-<tool_call>
-  <name>tool_name</name>
-  <args>
-    <arg_name>arg_value</arg_name>
-  </args>
-</tool_call>
+If tool calling is not available for this provider, you must use the XML tool call format below.
 
 Available Tools:
 
@@ -480,6 +475,45 @@ RULES
 5. **Tools First**: If you need repo details, use tools instead of guessing.
 `
 
+	if toolMode == "native" {
+		systemPromptContent = `You are OpenSpace, a highly skilled software engineer with extensive knowledge in many programming languages, frameworks, best practices, and performance optimization.
+
+====
+TOOL USE
+====
+You have access to a set of tools via tool calling. When you need to use a tool, call it instead of writing XML. Do not output <tool_call> blocks.
+
+Tool execution MUST follow this step-by-step loop:
+1) Understand user request and decide which tool(s) to use.
+2) Call the tool(s) with exact, minimal arguments.
+3) Read the returned Tool Results.
+4) Continue until you have enough information or changes are made.
+5) Summarize findings and provide the final answer.
+
+Available Tools:
+
+1. search_files: Search for files by name. Args: query
+2. read_file: Read the content of a file. Args: path
+3. list_files: List files in a directory. Args: path
+4. run_command: Execute a shell command. Args: command
+5. save_file: Save content to a file. Args: path, content
+6. git_status: Check git status. Args: none
+7. git_diff: Check git diff. Args: staged (optional)
+8. manage_todo: Manage session todo list. Args: action, content/id/status (depending on action)
+
+====
+RULES
+====
+1. **Act as an Engineer**: Be precise, technical, and direct. Do not apologize for errors; fix them.
+2. **Context Awareness**: You are working in a persistent session. Use 'read_file' to understand the code before editing.
+3. **Iterative Process**:
+   - ANALYZE: Understand the task and codebase.
+   - PLAN: Break down complex tasks.
+   - EXECUTE: Use tools to make changes.
+4. **Tools First**: If you need repo details, use tools instead of guessing.
+`
+	}
+
 	if planMode {
 		systemPromptContent += `
 ====
@@ -511,7 +545,7 @@ You are currently in ACT MODE.
 	messages = append([]map[string]interface{}{systemPrompt}, messages...)
 
 	// Make request
-	responseText, rawTurns, err := s.callLLMService(ctx, sessionID, serviceConfig, messages, targetModel)
+	responseText, rawTurns, err := s.callLLMService(ctx, sessionID, serviceConfig, messages, targetModel, planMode)
 	if err != nil {
 		return nil, err
 	}
@@ -743,7 +777,7 @@ func (s *Service) DeleteCustomLLMService(serviceID string) error {
 }
 
 // callLLMService calls the LLM service API with tool loop
-func (s *Service) callLLMService(ctx context.Context, sessionID string, config CustomLLMService, initialMessages []map[string]interface{}, model string) (string, []map[string]interface{}, error) {
+func (s *Service) callLLMService(ctx context.Context, sessionID string, config CustomLLMService, initialMessages []map[string]interface{}, model string, planMode bool) (string, []map[string]interface{}, error) {
 	currentMessages := make([]map[string]interface{}, len(initialMessages))
 	copy(currentMessages, initialMessages)
 
@@ -753,6 +787,8 @@ func (s *Service) callLLMService(ctx context.Context, sessionID string, config C
 	maxTurns := 10
 	var fullResponseBuilder strings.Builder
 	rawTurns := make([]map[string]interface{}, 0)
+	registry := newToolRegistry()
+	toolMode := resolveToolCallingMode(config)
 
 	for i := 0; i < maxTurns; i++ {
 		// Check context cancellation
@@ -765,13 +801,11 @@ func (s *Service) callLLMService(ctx context.Context, sessionID string, config C
 		var req *http.Request
 		var err error
 		var rawRequestJSON []byte
+		var requestData map[string]interface{}
 
 		if config.Provider == "anthropic" {
-			// Anthropic specific logic
 			var systemPrompt string
 			var anthropicMessages []map[string]interface{}
-
-			// Extract system prompt and filter messages
 			for _, msg := range currentMessages {
 				role := msg["role"].(string)
 				if role == "system" {
@@ -782,88 +816,67 @@ func (s *Service) callLLMService(ctx context.Context, sessionID string, config C
 					anthropicMessages = append(anthropicMessages, msg)
 				}
 			}
-
-			requestData := map[string]interface{}{
+			requestData = map[string]interface{}{
 				"model":      model,
 				"messages":   anthropicMessages,
 				"max_tokens": 4096,
 				"system":     strings.TrimSpace(systemPrompt),
 			}
-
-			rawRequestJSON, err = json.MarshalIndent(requestData, "", "  ")
-			if err != nil {
-				return "", rawTurns, fmt.Errorf("failed to marshal request: %w", err)
-			}
-			jsonData := rawRequestJSON // Use the same data but compact would be better for network
-
-			req, err = http.NewRequestWithContext(ctx, "POST", config.BaseURL, strings.NewReader(string(jsonData)))
-			if err != nil {
-				return "", rawTurns, fmt.Errorf("failed to create request: %w", err)
-			}
-
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("x-api-key", config.APIKey)
-			req.Header.Set("anthropic-version", "2023-06-01")
-
-			// Add custom headers
-			for key, value := range config.Headers {
-				req.Header.Set(key, value)
-			}
-
 		} else {
-			// Default (OpenAI compatible) logic
-			requestData := map[string]interface{}{
+			requestData = map[string]interface{}{
 				"model":       model,
 				"messages":    currentMessages,
 				"temperature": 1,
 				"top_p":       0.95,
 				"max_tokens":  2048,
 			}
-
-			rawRequestJSON, err = json.MarshalIndent(requestData, "", "  ")
-			if err != nil {
-				return "", rawTurns, fmt.Errorf("failed to marshal request: %w", err)
+			if toolMode == "native" {
+				requestData["tools"] = registry.OpenAITools()
+				requestData["tool_choice"] = "auto"
 			}
-			jsonData := rawRequestJSON
+		}
 
-			req, err = http.NewRequestWithContext(ctx, "POST", config.BaseURL, strings.NewReader(string(jsonData)))
-			if err != nil {
-				return "", rawTurns, fmt.Errorf("failed to create request: %w", err)
-			}
+		rawRequestJSON, err = json.MarshalIndent(requestData, "", "  ")
+		if err != nil {
+			return "", rawTurns, fmt.Errorf("failed to marshal request: %w", err)
+		}
+		req, err = http.NewRequestWithContext(ctx, "POST", config.BaseURL, strings.NewReader(string(rawRequestJSON)))
+		if err != nil {
+			return "", rawTurns, fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
 
-			req.Header.Set("Content-Type", "application/json")
-
-			// Auth
+		if config.Provider == "anthropic" {
+			req.Header.Set("x-api-key", config.APIKey)
+			req.Header.Set("anthropic-version", "2023-06-01")
+		} else {
 			switch config.AuthType {
 			case "apiKey", "bearer":
 				if config.APIKey != "" {
 					req.Header.Set("Authorization", "Bearer "+config.APIKey)
 				}
 			case "none":
-				// No authentication
 			default:
 				if config.APIKey != "" {
 					req.Header.Set("Authorization", "Bearer "+config.APIKey)
 				}
 			}
-
-			// Add custom headers
-			for key, value := range config.Headers {
-				req.Header.Set(key, value)
-			}
 		}
 
-		// Make request
+		for key, value := range config.Headers {
+			req.Header.Set(key, value)
+		}
+
 		client := &http.Client{Timeout: 120 * time.Second}
 		resp, err := client.Do(req)
 		if err != nil {
 			return "", rawTurns, fmt.Errorf("request failed: %w", err)
 		}
 
-		body, err := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		if err != nil {
-			return "", rawTurns, fmt.Errorf("failed to read response: %w", err)
+		if readErr != nil {
+			return "", rawTurns, fmt.Errorf("failed to read response: %w", readErr)
 		}
 
 		sanitizedHeaders := sanitizeRequestHeaders(req.Header)
@@ -886,22 +899,20 @@ func (s *Service) callLLMService(ctx context.Context, sessionID string, config C
 		})
 
 		rawDebugInfo := fmt.Sprintf("\n\n<debug_info>\n<headers>\n%s\n</headers>\n<request>\n%s\n</request>\n<response>\n%s\n</response>\n</debug_info>", string(requestHeadersJSON), string(rawRequestJSON), string(body))
-
 		if resp.StatusCode >= 400 {
 			return "", rawTurns, fmt.Errorf("API request failed with status %d: %s%s", resp.StatusCode, string(body), rawDebugInfo)
 		}
 
-		// Parse response
 		var response map[string]interface{}
 		if err := json.Unmarshal(body, &response); err != nil {
 			return "", rawTurns, fmt.Errorf("failed to parse response: %w", err)
 		}
 
-		// Extract response text
 		var responseText string
+		var nativeToolCalls []ToolCall
+		var nativeToolCallsRaw []map[string]any
 
 		if config.Provider == "anthropic" {
-			// Anthropic response parsing
 			if contentArray, ok := response["content"].([]interface{}); ok && len(contentArray) > 0 {
 				if firstBlock, ok := contentArray[0].(map[string]interface{}); ok {
 					if text, ok := firstBlock["text"].(string); ok {
@@ -910,80 +921,92 @@ func (s *Service) callLLMService(ctx context.Context, sessionID string, config C
 				}
 			}
 		} else {
-			// OpenAI response parsing
 			if choices, ok := response["choices"].([]interface{}); ok && len(choices) > 0 {
 				if choice, ok := choices[0].(map[string]interface{}); ok {
 					if message, ok := choice["message"].(map[string]interface{}); ok {
 						if content, ok := message["content"].(string); ok {
 							responseText = content
 						}
+						if toolMode == "native" {
+							nCalls, nRaw, err := parseOpenAIToolCalls(anyMap(message))
+							if err != nil {
+								return "", rawTurns, err
+							}
+							nativeToolCalls = nCalls
+							nativeToolCallsRaw = nRaw
+						}
 					}
 				}
 			}
-			// Fallback for some compatible APIs that might use 'content' directly or other formats?
-			// For now, stick to OpenAI standard.
 		}
 
-		if responseText == "" {
+		if responseText == "" && len(nativeToolCalls) == 0 {
 			return "", rawTurns, fmt.Errorf("empty response from service (provider: %s)%s", config.Provider, rawDebugInfo)
 		}
 
-		// Append to full response
 		if fullResponseBuilder.Len() > 0 {
 			fullResponseBuilder.WriteString("\n\n")
 		}
-		fullResponseBuilder.WriteString(responseText)
+		if responseText != "" {
+			fullResponseBuilder.WriteString(responseText)
+		}
 
-		// Check for tools
-		re := regexp.MustCompile(`(?s)<tool_call>(.*?)</tool_call>`)
-		matches := re.FindAllStringSubmatch(responseText, -1)
+		if len(nativeToolCalls) > 0 {
+			transcript := buildToolCallTranscriptXML(nativeToolCalls)
+			if responseText != "" {
+				fullResponseBuilder.WriteString("\n\n")
+			}
+			fullResponseBuilder.WriteString(transcript)
 
-		if len(matches) == 0 {
+			currentMessages = append(currentMessages, map[string]interface{}{
+				"role":       "assistant",
+				"content":    responseText,
+				"tool_calls": nativeToolCallsRaw,
+			})
+
+			var results []ToolResult
+			for _, call := range nativeToolCalls {
+				res := executeToolCall(ctx, s, registry, sessionID, call, planMode)
+				results = append(results, res)
+				currentMessages = append(currentMessages, map[string]interface{}{
+					"role":         "tool",
+					"tool_call_id": res.ToolCallID,
+					"content":      res.Content,
+				})
+			}
+
+			resultsTranscript := buildToolResultsTranscript(results)
+			if resultsTranscript != "" {
+				fullResponseBuilder.WriteString("\n\n<tool_results>\n")
+				fullResponseBuilder.WriteString(resultsTranscript)
+				fullResponseBuilder.WriteString("\n</tool_results>")
+			}
+			continue
+		}
+
+		xmlCalls, err := parseXMLToolCallsFromText(responseText)
+		if err != nil {
+			return "", rawTurns, err
+		}
+		if len(xmlCalls) == 0 {
 			return fullResponseBuilder.String(), rawTurns, nil
 		}
 
-		// Append assistant message
 		currentMessages = append(currentMessages, map[string]interface{}{
 			"role":    "assistant",
 			"content": responseText,
 		})
 
-		// Execute tools
 		var toolResults []string
-		for _, match := range matches {
-			toolCallXML := match[1]
-
-			// Extract tool name
-			nameRe := regexp.MustCompile(`<name>(.*?)</name>`)
-			nameMatch := nameRe.FindStringSubmatch(toolCallXML)
-			if len(nameMatch) < 2 {
-				continue
-			}
-			toolName := strings.TrimSpace(nameMatch[1])
-
-			// Extract args
-			argsMap := make(map[string]string)
-			argsRe := regexp.MustCompile(`<(.*?)>(.*?)</\1>`)
-			argsMatches := argsRe.FindAllStringSubmatch(toolCallXML, -1)
-			for _, am := range argsMatches {
-				if am[1] != "name" && am[1] != "args" {
-					argsMap[am[1]] = am[2]
-				}
-			}
-
-			// Execute tool
-			result := s.dispatchTool(ctx, sessionID, toolName, argsMap)
-			argsJSON, _ := json.MarshalIndent(argsMap, "", "  ")
-			toolResults = append(toolResults, fmt.Sprintf("STEP: execute_tool\nname: %s\nargs: %s\nresult:\n%s", toolName, string(argsJSON), result))
+		for _, call := range xmlCalls {
+			res := executeToolCall(ctx, s, registry, sessionID, call, planMode)
+			argsJSON, _ := json.MarshalIndent(call.Args, "", "  ")
+			toolResults = append(toolResults, fmt.Sprintf("STEP: execute_tool\nname: %s\nargs: %s\nresult:\n%s", call.Name, string(argsJSON), res.Content))
 		}
 
-		// Add tool results as user message
 		if len(toolResults) > 0 {
 			resultsText := "Tool Results:\n" + strings.Join(toolResults, "\n---\n")
-
-			// Append results to full response for visibility
-			fullResponseBuilder.WriteString("\n\n")
-			fullResponseBuilder.WriteString("<tool_results>\n")
+			fullResponseBuilder.WriteString("\n\n<tool_results>\n")
 			fullResponseBuilder.WriteString(strings.Join(toolResults, "\n---\n"))
 			fullResponseBuilder.WriteString("\n</tool_results>")
 
@@ -991,191 +1014,20 @@ func (s *Service) callLLMService(ctx context.Context, sessionID string, config C
 				"role":    "user",
 				"content": resultsText + "\n\nPlease continue.",
 			})
+			continue
 		}
+
+		return fullResponseBuilder.String(), rawTurns, nil
+
 	}
 	// If we exit the loop normally (e.g. context done), return what we have
 	return fullResponseBuilder.String(), rawTurns, nil
 }
 
-// dispatchTool dispatches a tool call to the appropriate service method
-func (s *Service) dispatchTool(ctx context.Context, sid string, name string, args map[string]string) string {
-	sessionID := sid
-	switch name {
-	case "search_files":
-		query := args["query"]
-		ctxTool, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		files, err := s.FindFilesByNameContext(ctxTool, query, "", 10)
-		if err != nil {
-			return fmt.Sprintf("Error: %v", err)
-		}
-		return strings.Join(files, "\n")
-	case "read_file":
-		path := args["path"]
-		content, err := s.GetFileContent(path)
-		if err != nil {
-			return fmt.Sprintf("Error: %v", err)
-		}
-		fileContent := content["content"].(string)
-		if len(fileContent) > 5000 {
-			fileContent = fileContent[:5000] + "... (truncated)"
-		}
-		return fileContent
-	case "list_files":
-		path := args["path"]
-		files, err := s.GetFiles(path)
-		if err != nil {
-			return fmt.Sprintf("Error: %v", err)
-		}
-		var result []string
-		for _, f := range files {
-			result = append(result, fmt.Sprintf("%s (%s)", f["name"], f["type"]))
-		}
-		return strings.Join(result, "\n")
-	case "run_command":
-		command := args["command"]
-		ctxTool, cancel := context.WithTimeout(ctx, 60*time.Second)
-		defer cancel()
-		result, err := s.RunCommandWithCwdContext(ctxTool, command, "")
-		if err != nil {
-			return fmt.Sprintf("Error: %v\nOutput: %s", err, result.Output)
-		}
-		return result.Output
-	case "save_file":
-		path := args["path"]
-		content := args["content"]
-		err := s.SaveFileContent(path, content)
-		if err != nil {
-			return fmt.Sprintf("Error: %v", err)
-		}
-		return "File saved successfully"
-	case "git_status":
-		ctxTool, cancel := context.WithTimeout(ctx, 15*time.Second)
-		defer cancel()
-		result, err := s.RunCommandWithCwdContext(ctxTool, "git status --short", "")
-		if err != nil {
-			return fmt.Sprintf("Error: %v", err)
-		}
-		status := strings.TrimSpace(result.Output)
-		if status == "" {
-			return "Clean working tree"
-		}
-		return status
-	case "git_diff":
-		staged := args["staged"] == "true"
-		ctxTool, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		command := "git diff"
-		if staged {
-			command = "git diff --cached"
-		}
-		result, err := s.RunCommandWithCwdContext(ctxTool, command, "")
-		if err != nil {
-			return fmt.Sprintf("Error: %v", err)
-		}
-		diff := strings.TrimSpace(result.Output)
-		if diff == "" {
-			return "No changes"
-		}
-		return diff
-	case "manage_todo":
-		action := args["action"]
-
-		session, err := s.GetSession(sessionID)
-		if err != nil {
-			return fmt.Sprintf("Error: Session not found")
-		}
-
-		todos := session.Todos
-		if todos == nil {
-			todos = []TodoItem{}
-		}
-
-		switch action {
-		case "add":
-			content := args["content"]
-			if content == "" {
-				return "Error: content is required"
-			}
-			newTodo := TodoItem{
-				ID:       fmt.Sprintf("todo_%d", time.Now().UnixNano()),
-				Content:  content,
-				Status:   "pending",
-				Priority: "medium",
-			}
-			todos = append(todos, newTodo)
-			s.UpdateSessionTodos(sessionID, todos)
-			return fmt.Sprintf("Todo added: %s (ID: %s)", content, newTodo.ID)
-
-		case "update":
-			id := args["id"]
-			status := args["status"]
-			if id == "" {
-				return "Error: id is required"
-			}
-
-			found := false
-			for i, t := range todos {
-				if t.ID == id {
-					if status != "" {
-						todos[i].Status = status
-					}
-					// Optional: update content/priority
-					found = true
-					break
-				}
-			}
-
-			if !found {
-				return fmt.Sprintf("Error: Todo %s not found", id)
-			}
-
-			s.UpdateSessionTodos(sessionID, todos)
-			return fmt.Sprintf("Todo updated: %s", id)
-
-		case "delete":
-			id := args["id"]
-			if id == "" {
-				return "Error: id is required"
-			}
-
-			newTodos := []TodoItem{}
-			found := false
-			for _, t := range todos {
-				if t.ID != id {
-					newTodos = append(newTodos, t)
-				} else {
-					found = true
-				}
-			}
-
-			if !found {
-				return fmt.Sprintf("Error: Todo %s not found", id)
-			}
-
-			s.UpdateSessionTodos(sessionID, newTodos)
-			return fmt.Sprintf("Todo deleted: %s", id)
-
-		case "list":
-			if len(todos) == 0 {
-				return "No todos in this session."
-			}
-			var list []string
-			for _, t := range todos {
-				icon := "[ ]"
-				if t.Status == "completed" {
-					icon = "[x]"
-				} else if t.Status == "in_progress" {
-					icon = "[/]"
-				}
-				list = append(list, fmt.Sprintf("%s %s (ID: %s)", icon, t.Content, t.ID))
-			}
-			return strings.Join(list, "\n")
-
-		default:
-			return "Error: Unknown action. Use add, update, delete, or list."
-		}
-	default:
-		return "Unknown tool: " + name
+func anyMap(m map[string]interface{}) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
 	}
+	return out
 }
