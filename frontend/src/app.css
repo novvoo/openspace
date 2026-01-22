@@ -233,6 +233,26 @@ body {
   background-color: var(--bg-color);
 }
 
+.Resizer {
+  flex-shrink: 0;
+  background: var(--border-color);
+}
+
+.ResizerVertical {
+  width: 6px;
+  cursor: col-resize;
+}
+
+.ResizerHorizontal {
+  height: 6px;
+  cursor: row-resize;
+}
+
+.ResizerVertical:hover,
+.ResizerHorizontal:hover {
+  background: var(--accent-color);
+}
+
 .ChatItem {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border-color);

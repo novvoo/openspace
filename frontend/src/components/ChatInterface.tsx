@@ -82,7 +82,7 @@ const CodeBlock: React.FC<{ code: string; language?: string; onApply?: () => voi
     );
 };
 
-const MessageRenderer: React.FC<{ text: string; onOpenFile?: (path: string) => void }> = ({ text, onOpenFile }) => {
+const MessageRenderer: React.FC<{ text: string; onOpenFile?: (path: string) => void; allowDebug?: boolean }> = ({ text, onOpenFile, allowDebug }) => {
     const [showDebug, setShowDebug] = useState(false);
     const [cleanText, setCleanText] = useState('');
     const [debugInfos, setDebugInfos] = useState<string[]>([]);
@@ -105,13 +105,12 @@ const MessageRenderer: React.FC<{ text: string; onOpenFile?: (path: string) => v
             infos.push(content);
         }
         
-        if (infos.length > 0) {
-            newText = text.replace(debugRegex, '').trim();
-        }
+        newText = text.replace(debugRegex, '').trim();
         
         setCleanText(newText);
-        setDebugInfos(infos);
-    }, [text]);
+        setDebugInfos(allowDebug ? infos : []);
+        if (!allowDebug) setShowDebug(false);
+    }, [text, allowDebug]);
 
     // Regex for tool execution (on clean text)
     const renderContent = (content: string) => {
@@ -260,7 +259,7 @@ const MessageRenderer: React.FC<{ text: string; onOpenFile?: (path: string) => v
         <div style={{ lineHeight: 1.6 }}>
             {renderContent(cleanText)}
             
-            {debugInfos.length > 0 && (
+            {allowDebug && debugInfos.length > 0 && (
                 <Box sx={{ mt: 2, pt: 1, borderTop: '1px solid var(--border-color)' }}>
                     <Button 
                         size="small" 
@@ -292,6 +291,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, onOpenFile, on
     const [messages, setMessages] = useState<Message[]>([]);
     const [loading, setLoading] = useState(false);
     const [rawOpenById, setRawOpenById] = useState<Record<string, boolean>>({});
+    const [showRawEnabled, setShowRawEnabled] = useState<boolean>(() => {
+        try {
+            const savedV3 = localStorage.getItem('openspace.showRaw.v3');
+            if (savedV3 === null) return true;
+            return savedV3 === 'true';
+        } catch {
+            return true;
+        }
+    });
     
     const [, setModelStatus] = useState<'idle' | 'processing' | 'error'>('idle');
     const [models, setModels] = useState<Model[]>([]);
@@ -305,6 +313,24 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, onOpenFile, on
     const [modelAnchorEl, setModelAnchorEl] = useState<null | HTMLElement>(null);
 
     const scrollRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        try {
+            localStorage.setItem('openspace.showRaw.v3', showRawEnabled ? 'true' : 'false');
+        } catch {}
+    }, [showRawEnabled]);
+
+    const splitProviderModel = (value: string) => {
+        if (value.includes('::')) {
+            const [providerId, modelId] = value.split('::', 2);
+            return { providerId: providerId || '', modelId: modelId || '' };
+        }
+        if (value.includes(':')) {
+            const [providerId, modelId] = value.split(':', 2);
+            return { providerId: providerId || '', modelId: modelId || '' };
+        }
+        return { providerId: '', modelId: value };
+    };
 
     // Initial Load
     useEffect(() => {
@@ -335,10 +361,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, onOpenFile, on
              const modelsList: Model[] = [];
             if (parsedModels.providers) {
                  parsedModels.providers.forEach((p: any) => {
-                     const pName = p.name || p.id;
+                     const providerId = p.id || '';
+                     const pName = p.name || providerId;
                      if (p.models) {
                          Object.values(p.models).forEach((m: any) => {
-                             modelsList.push({ id: m.id, name: m.name || m.id, provider: pName });
+                             const modelId = m.id || '';
+                             const compositeId = providerId && modelId ? `${providerId}::${modelId}` : (modelId || providerId);
+                             const displayName = `${pName}: ${m.name || modelId || compositeId}`;
+                             modelsList.push({ id: compositeId, name: displayName, provider: pName });
                          });
                      }
                  });
@@ -508,13 +538,30 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, onOpenFile, on
             });
             setModelStatus('idle');
         } catch (e) {
-            // Only add error message if not cancelled (usually cancelled requests might throw too)
-            // But for now, let's just show error unless it's a specific "cancelled" error
             console.error(e);
-            setMessages(prev => [...prev, { role: 'system', text: 'Error sending message (or cancelled)', timestamp: new Date() }]);
+            const errText = String(e);
+            setMessages(prev => [...prev, { role: 'system', text: `发送失败：${errText}`, timestamp: new Date() }]);
             setModelStatus('error');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleSummarize = async () => {
+        if (!sessionId) return;
+        const { providerId, modelId } = splitProviderModel(selectedModel);
+        if (!providerId || !modelId) {
+            setMessages(prev => [...prev, { role: 'system', text: '无法总结：当前未选择有效的 Provider/Model。', timestamp: new Date() }]);
+            return;
+        }
+        try {
+            const raw = await SummarizeSession(sessionId, providerId, modelId);
+            const parsed = JSON.parse(raw);
+            const summaryText = typeof parsed?.summary === 'string' ? parsed.summary : (typeof parsed === 'string' ? parsed : JSON.stringify(parsed));
+            setMessages(prev => [...prev, { role: 'system', text: `Session Summary:\n\n${summaryText}`, timestamp: new Date() }]);
+        } catch (e) {
+            console.error(e);
+            setMessages(prev => [...prev, { role: 'system', text: `总结失败：${e}`, timestamp: new Date() }]);
         }
     };
 
@@ -581,6 +628,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, onOpenFile, on
                             <Typography variant="caption" sx={{ color: 'var(--text-secondary)' }}>
                                 Turn {idx + 1} • {t?.provider || ''} {t?.model || ''} • {t?.status || ''}
                             </Typography>
+                            {typeof t?.requestHeaders === 'string' && t.requestHeaders.trim() !== '' && (
+                                <Box sx={{ mt: 0.5 }}>
+                                    <Typography variant="caption" sx={{ color: 'var(--text-secondary)' }}>Request Headers</Typography>
+                                    <CodeBlock language="json" code={t.requestHeaders} />
+                                </Box>
+                            )}
                             {typeof t?.request === 'string' && <CodeBlock language="json" code={t.request} />}
                             {typeof t?.response === 'string' && <CodeBlock language="json" code={t.response} />}
                         </Box>
@@ -609,7 +662,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, onOpenFile, on
     return (
         <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', bgcolor: 'var(--bg-color)', color: 'var(--text-primary)' }}>
             {/* Toolbar */}
-            <Paper square sx={{ p: 1, display: 'flex', alignItems: 'center', gap: 1, bgcolor: 'var(--sidebar-bg)', borderBottom: '1px solid var(--border-color)', color: 'inherit' }}>
+            <Paper
+                square
+                sx={{
+                    p: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    flexWrap: 'wrap',
+                    bgcolor: 'var(--sidebar-bg)',
+                    borderBottom: '1px solid var(--border-color)',
+                    color: 'inherit'
+                }}
+            >
                 <BotIcon fontSize="small" sx={{ color: 'var(--accent-color)' }} />
                 <Typography variant="subtitle2" sx={{ fontWeight: 'bold', color: 'inherit' }}>Chat</Typography>
                 <Box sx={{ flex: 1 }} />
@@ -658,7 +723,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, onOpenFile, on
                     color="primary" 
                     variant="outlined" 
                     onClick={(e) => setModelAnchorEl(e.currentTarget)} 
-                    sx={{ fontSize: '0.7rem', height: 24, cursor: 'pointer' }}
+                    sx={{
+                        fontSize: '0.7rem',
+                        height: 24,
+                        cursor: 'pointer',
+                        maxWidth: 220,
+                        flexShrink: 1,
+                        '& .MuiChip-label': {
+                            display: 'block',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis'
+                        }
+                    }}
                 />
                 <Menu
                     anchorEl={modelAnchorEl}
@@ -683,7 +759,22 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, onOpenFile, on
                         <TerminalIcon fontSize="small" />
                     </IconButton>
                 </Tooltip>
-                <IconButton size="small" onClick={() => SummarizeSession(sessionId, "", "")}>
+                <Tooltip title={showRawEnabled ? "Hide Raw/Debug" : "Show Raw/Debug"}>
+                    <Chip
+                        size="small"
+                        label="RAW"
+                        variant="outlined"
+                        onClick={() => setShowRawEnabled(v => !v)}
+                        sx={{
+                            height: 24,
+                            fontSize: '0.7rem',
+                            cursor: 'pointer',
+                            borderColor: showRawEnabled ? 'var(--success)' : 'var(--border-color)',
+                            color: showRawEnabled ? 'var(--success)' : 'var(--text-secondary)'
+                        }}
+                    />
+                </Tooltip>
+                <IconButton size="small" onClick={handleSummarize}>
 <FileIcon fontSize="small" />
                 </IconButton>
             </Paper>
@@ -704,7 +795,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, onOpenFile, on
                             <Typography variant="caption" sx={{ color: 'var(--text-secondary)' }}>
                                 {msg.role.toUpperCase()} • {msg.timestamp.toLocaleTimeString()}
                             </Typography>
-                            {msg.role !== 'system' && (
+                            {showRawEnabled && msg.role !== 'system' && (
                                 <Button
                                     size="small"
                                     variant="text"
@@ -750,10 +841,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ sessionId, onOpenFile, on
                                 </Box>
                             ) : (
                                 <Box sx={{ color: 'inherit' }}>
-                                    <MessageRenderer text={msg.text} onOpenFile={onOpenFile} />
+                                    <MessageRenderer text={msg.text} onOpenFile={onOpenFile} allowDebug={showRawEnabled} />
                                 </Box>
                             )}
-                            {isRawOpen(msg, i) && renderRawTurns(msg)}
+                            {showRawEnabled && isRawOpen(msg, i) && renderRawTurns(msg)}
                         </Paper>
                     </Box>
                 ))}

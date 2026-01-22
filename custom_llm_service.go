@@ -28,6 +28,68 @@ type CustomLLMService struct {
 	ContextLimit int               `json:"contextLimit,omitempty"` // Max context tokens (approx)
 }
 
+func sanitizeRequestHeaders(h http.Header) map[string][]string {
+	out := make(map[string][]string, len(h))
+	for k, v := range h {
+		lk := strings.ToLower(strings.TrimSpace(k))
+		if lk == "" {
+			continue
+		}
+		switch lk {
+		case "authorization", "x-api-key", "api-key", "x-auth-token", "x-access-token", "cookie", "set-cookie":
+			redacted := make([]string, 0, len(v))
+			for _, vv := range v {
+				if lk == "authorization" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(vv)), "bearer ") {
+					redacted = append(redacted, "Bearer <redacted>")
+				} else {
+					redacted = append(redacted, "<redacted>")
+				}
+			}
+			out[k] = redacted
+		default:
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func normalizeStoredMessage(msg map[string]interface{}) (string, string, bool) {
+	infoAny, ok := msg["info"]
+	if !ok {
+		return "", "", false
+	}
+	info, ok := infoAny.(map[string]interface{})
+	if !ok {
+		return "", "", false
+	}
+	role, _ := info["role"].(string)
+
+	partsAny, ok := msg["parts"]
+	if !ok {
+		return "", "", false
+	}
+
+	var text string
+	switch parts := partsAny.(type) {
+	case []interface{}:
+		if len(parts) == 0 {
+			return role, "", true
+		}
+		if first, ok := parts[0].(map[string]interface{}); ok {
+			text, _ = first["text"].(string)
+		}
+	case []map[string]interface{}:
+		if len(parts) == 0 {
+			return role, "", true
+		}
+		text, _ = parts[0]["text"].(string)
+	default:
+		return "", "", false
+	}
+
+	return role, text, true
+}
+
 // prepareMessages prepares and truncates messages to fit context limit
 func (s *Service) prepareMessages(messages []map[string]interface{}, limit int) []map[string]interface{} {
 	if limit <= 0 {
@@ -67,12 +129,14 @@ func (s *Service) prepareMessages(messages []map[string]interface{}, limit int) 
 	firstMsg := messages[0]
 	result = append(result, firstMsg)
 
-	currentTokens := len(firstMsg["content"].(string)) / 4
+	firstContent, _ := firstMsg["content"].(string)
+	currentTokens := len(firstContent) / 4
 
 	// Keep second message if it exists (often Assistant's first reply) to maintain context start
 	if len(messages) > 1 {
 		secondMsg := messages[1]
-		secondTokens := len(secondMsg["content"].(string)) / 4
+		secondContent, _ := secondMsg["content"].(string)
+		secondTokens := len(secondContent) / 4
 		if currentTokens+secondTokens < limit/2 { // Only keep if it doesn't take up too much space
 			result = append(result, secondMsg)
 			currentTokens += secondTokens
@@ -245,27 +309,46 @@ func (s *Service) TestCustomLLMService(configData string) (map[string]interface{
 
 // SendCustomLLMMessage sends a message using custom LLM service
 func (s *Service) SendCustomLLMMessage(ctx context.Context, sessionID string, message string, serviceID string) (map[string]interface{}, error) {
-	// Get custom service config
+	serviceConfig, err := s.getCustomLLMServiceConfig(serviceID)
+	if err != nil {
+		return nil, err
+	}
+	return s.sendLLMMessageInternal(ctx, sessionID, message, serviceConfig, serviceConfig.DefaultModel)
+}
+
+func (s *Service) SendCustomLLMMessageWithModel(ctx context.Context, sessionID string, message string, serviceID string, modelID string) (map[string]interface{}, error) {
+	serviceConfig, err := s.getCustomLLMServiceConfig(serviceID)
+	if err != nil {
+		return nil, err
+	}
+	return s.sendLLMMessageInternal(ctx, sessionID, message, serviceConfig, modelID)
+}
+
+func (s *Service) getCustomLLMServiceConfig(serviceID string) (CustomLLMService, error) {
 	customServices, ok := s.config["customServices"].([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("custom services not configured")
+		return CustomLLMService{}, fmt.Errorf("custom services not configured")
 	}
 
-	var serviceConfig CustomLLMService
 	for _, svc := range customServices {
-		svcMap := svc.(map[string]interface{})
+		svcMap, ok := svc.(map[string]interface{})
+		if !ok {
+			continue
+		}
 		if svcMap["id"] == serviceID {
 			serviceJSON, _ := json.Marshal(svcMap)
-			json.Unmarshal(serviceJSON, &serviceConfig)
-			break
+			var serviceConfig CustomLLMService
+			if err := json.Unmarshal(serviceJSON, &serviceConfig); err != nil {
+				return CustomLLMService{}, fmt.Errorf("failed to parse custom service: %w", err)
+			}
+			if serviceConfig.ID == "" {
+				return CustomLLMService{}, fmt.Errorf("custom service not found: %s", serviceID)
+			}
+			return serviceConfig, nil
 		}
 	}
 
-	if serviceConfig.ID == "" {
-		return nil, fmt.Errorf("custom service not found: %s", serviceID)
-	}
-
-	return s.sendLLMMessageInternal(ctx, sessionID, message, serviceConfig, serviceConfig.DefaultModel)
+	return CustomLLMService{}, fmt.Errorf("custom service not found: %s", serviceID)
 }
 
 // sendLLMMessageInternal handles the common logic for sending messages via LLM
@@ -284,16 +367,17 @@ func (s *Service) sendLLMMessageInternal(ctx context.Context, sessionID string, 
 	// Prepare messages for API
 	messages := []map[string]interface{}{}
 	for _, msg := range session.Messages {
-		msgInfo := msg["info"].(map[string]interface{})
-		msgParts := msg["parts"].([]interface{})
-
-		if len(msgParts) > 0 {
-			textPart := msgParts[0].(map[string]interface{})
-			messages = append(messages, map[string]interface{}{
-				"role":    msgInfo["role"],
-				"content": textPart["text"],
-			})
+		role, content, ok := normalizeStoredMessage(msg)
+		if !ok {
+			continue
 		}
+		if strings.TrimSpace(role) == "" {
+			continue
+		}
+		messages = append(messages, map[string]interface{}{
+			"role":    role,
+			"content": content,
+		})
 	}
 
 	// Add current message
@@ -325,9 +409,16 @@ func (s *Service) sendLLMMessageInternal(ctx context.Context, sessionID string, 
 ====
 TOOL USE
 ====
-You have access to a set of tools that are executed upon the user's approval. You can use one tool per message, and will receive the result of that tool use in the user's next message.
+You have access to a set of tools. When you output one or more <tool_call> blocks, the tools will be executed automatically and you will receive the results in the next message as a "Tool Results" user message.
 
-To use a tool, you must output a valid XML block like this:
+Tool execution MUST follow this step-by-step loop:
+1) Understand user request and decide which tool(s) to use.
+2) Briefly state the intended tool(s) and the exact command/path/query you will run.
+3) Output ONLY the <tool_call> block(s) (no extra text after the last </tool_call>).
+4) Read the returned Tool Results.
+5) Summarize findings and provide the final answer.
+
+To use a tool, you must output one or more valid XML blocks like this:
 
 <tool_call>
   <name>tool_name</name>
@@ -350,7 +441,8 @@ Available Tools:
 4. run_command: Execute a shell command.
    Args: <command>shell_command</command>
    - Only use this when necessary. Prefer specialized tools.
-   - You must wait for the command to finish and return output.
+   - Commands have timeouts; keep them short and non-interactive.
+   - Always use explicit, safe commands (no interactive prompts).
 
 5. save_file: Save content to a file.
    Args: <path>path/to/file</path> <content>file_content</content>
@@ -385,6 +477,7 @@ RULES
    - PLAN: Break down complex tasks.
    - EXECUTE: Use tools to make changes.
 4. **Formatting**: Always use the XML tool call format exactly.
+5. **Tools First**: If you need repo details, use tools instead of guessing.
 `
 
 	if planMode {
@@ -481,7 +574,7 @@ You are currently in ACT MODE.
 	session.UpdatedAt = now + 100
 
 	// Save session
-	if err := s.saveSessions(); err != nil {
+	if err := s.saveSessionsLocked(); err != nil {
 		fmt.Printf("Warning: Failed to save session: %v\n", err)
 	}
 
@@ -766,23 +859,33 @@ func (s *Service) callLLMService(ctx context.Context, sessionID string, config C
 		if err != nil {
 			return "", rawTurns, fmt.Errorf("request failed: %w", err)
 		}
-		defer resp.Body.Close()
 
 		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
 		if err != nil {
 			return "", rawTurns, fmt.Errorf("failed to read response: %w", err)
 		}
+
+		sanitizedHeaders := sanitizeRequestHeaders(req.Header)
+		requestHeadersJSON, _ := json.MarshalIndent(sanitizedHeaders, "", "  ")
 
 		rawTurns = append(rawTurns, map[string]interface{}{
 			"provider": config.Provider,
 			"model":    model,
 			"url":      config.BaseURL,
+			"method":   req.Method,
 			"status":   resp.StatusCode,
+			"requestHeaders": func() string {
+				if len(requestHeadersJSON) == 0 {
+					return ""
+				}
+				return string(requestHeadersJSON)
+			}(),
 			"request":  string(rawRequestJSON),
 			"response": string(body),
 		})
 
-		rawDebugInfo := fmt.Sprintf("\n\n<debug_info>\n<request>\n%s\n</request>\n<response>\n%s\n</response>\n</debug_info>", string(rawRequestJSON), string(body))
+		rawDebugInfo := fmt.Sprintf("\n\n<debug_info>\n<headers>\n%s\n</headers>\n<request>\n%s\n</request>\n<response>\n%s\n</response>\n</debug_info>", string(requestHeadersJSON), string(rawRequestJSON), string(body))
 
 		if resp.StatusCode >= 400 {
 			return "", rawTurns, fmt.Errorf("API request failed with status %d: %s%s", resp.StatusCode, string(body), rawDebugInfo)
@@ -869,8 +972,9 @@ func (s *Service) callLLMService(ctx context.Context, sessionID string, config C
 			}
 
 			// Execute tool
-			result := s.dispatchTool(sessionID, toolName, argsMap)
-			toolResults = append(toolResults, fmt.Sprintf("Tool: %s\nResult: %s", toolName, result))
+			result := s.dispatchTool(ctx, sessionID, toolName, argsMap)
+			argsJSON, _ := json.MarshalIndent(argsMap, "", "  ")
+			toolResults = append(toolResults, fmt.Sprintf("STEP: execute_tool\nname: %s\nargs: %s\nresult:\n%s", toolName, string(argsJSON), result))
 		}
 
 		// Add tool results as user message
@@ -894,12 +998,14 @@ func (s *Service) callLLMService(ctx context.Context, sessionID string, config C
 }
 
 // dispatchTool dispatches a tool call to the appropriate service method
-func (s *Service) dispatchTool(sid string, name string, args map[string]string) string {
+func (s *Service) dispatchTool(ctx context.Context, sid string, name string, args map[string]string) string {
 	sessionID := sid
 	switch name {
 	case "search_files":
 		query := args["query"]
-		files, err := s.FindFilesByName(query, "", 10)
+		ctxTool, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		files, err := s.FindFilesByNameContext(ctxTool, query, "", 10)
 		if err != nil {
 			return fmt.Sprintf("Error: %v", err)
 		}
@@ -928,11 +1034,13 @@ func (s *Service) dispatchTool(sid string, name string, args map[string]string) 
 		return strings.Join(result, "\n")
 	case "run_command":
 		command := args["command"]
-		output, err := s.RunCommand(command)
+		ctxTool, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+		result, err := s.RunCommandWithCwdContext(ctxTool, command, "")
 		if err != nil {
-			return fmt.Sprintf("Error: %v\nOutput: %s", err, output)
+			return fmt.Sprintf("Error: %v\nOutput: %s", err, result.Output)
 		}
-		return output
+		return result.Output
 	case "save_file":
 		path := args["path"]
 		content := args["content"]
@@ -942,20 +1050,30 @@ func (s *Service) dispatchTool(sid string, name string, args map[string]string) 
 		}
 		return "File saved successfully"
 	case "git_status":
-		status, err := s.GetGitStatus()
+		ctxTool, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		result, err := s.RunCommandWithCwdContext(ctxTool, "git status --short", "")
 		if err != nil {
 			return fmt.Sprintf("Error: %v", err)
 		}
+		status := strings.TrimSpace(result.Output)
 		if status == "" {
 			return "Clean working tree"
 		}
 		return status
 	case "git_diff":
 		staged := args["staged"] == "true"
-		diff, err := s.GetGitDiff(staged)
+		ctxTool, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		command := "git diff"
+		if staged {
+			command = "git diff --cached"
+		}
+		result, err := s.RunCommandWithCwdContext(ctxTool, command, "")
 		if err != nil {
 			return fmt.Sprintf("Error: %v", err)
 		}
+		diff := strings.TrimSpace(result.Output)
 		if diff == "" {
 			return "No changes"
 		}

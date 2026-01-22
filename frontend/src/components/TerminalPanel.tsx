@@ -16,9 +16,40 @@ type TerminalEntry = {
 interface TerminalPanelProps {
     open: boolean;
     onClose: () => void;
+    height?: number;
 }
 
-const TerminalPanel: React.FC<TerminalPanelProps> = ({ open, onClose }) => {
+const terminalBanner = `/*  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  */
+/* |_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_| */
+/* |_|                                                            |_| */
+/* |_|                                                            |_| */
+/* |_|                                                            |_| */
+/* |_|      $$$$$$\\                                               |_| */
+/* |_|     $$  __$$\\                                              |_| */
+/* |_|     $$ /  $$ | $$$$$$\\   $$$$$$\\  $$$$$$$\\                 |_| */
+/* |_|     $$ |  $$ |$$  __$$\\ $$  __$$\\ $$  __$$\\                |_| */
+/* |_|     $$ |  $$ |$$ /  $$ |$$$$$$$$ |$$ |  $$ |               |_| */
+/* |_|     $$ |  $$ |$$ |  $$ |$$   ____|$$ |  $$ |               |_| */
+/* |_|      $$$$$$  |$$$$$$$  |\\$$$$$$$\\ $$ |  $$ |               |_| */
+/* |_|      \\______/ $$  ____/  \\_______|\\__|  \\__|               |_| */
+/* |_|               $$ |                                         |_| */
+/* |_|      $$$$$$\\  $$ |                                         |_| */
+/* |_|     $$  __$$\\ \\__|                                         |_| */
+/* |_|     $$ /  \\__| $$$$$$\\   $$$$$$\\   $$$$$$$\\  $$$$$$\\       |_| */
+/* |_|     \\$$$$$$\\  $$  __$$\\  \\____$$\\ $$  _____|$$  __$$\\      |_| */
+/* |_|      \\____$$\\ $$ /  $$ | $$$$$$$ |$$ /      $$$$$$$$ |     |_| */
+/* |_|     $$\\   $$ |$$ |  $$ |$$  __$$ |$$ |      $$   ____|     |_| */
+/* |_|     \\$$$$$$  |$$$$$$$  |\\$$$$$$$ |\\$$$$$$$\\ \\$$$$$$$\\      |_| */
+/* |_|      \\______/ $$  ____/  \\_______| \\_______| \\_______|     |_| */
+/* |_|               $$ |                                         |_| */
+/* |_|               $$ |                                         |_| */
+/* |_|               \\__|                                         |_| */
+/* |_|                                                            |_| */
+/* |_|                                                            |_| */
+/* |_| _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _  _ |_| */
+/* |_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_||_| */`;
+
+const TerminalPanel: React.FC<TerminalPanelProps> = ({ open, onClose, height }) => {
     const [input, setInput] = useState('');
     const [entries, setEntries] = useState<TerminalEntry[]>([]);
     const [running, setRunning] = useState(false);
@@ -184,7 +215,7 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ open, onClose }) => {
             className="TerminalPanel"
             square
             elevation={0}
-            sx={{ bgcolor: 'var(--bg-secondary)', color: 'var(--text-primary)', borderTop: '1px solid var(--border-color)' }}
+            sx={{ bgcolor: 'var(--bg-secondary)', color: 'var(--text-primary)', borderTop: '1px solid var(--border-color)', height: height ? `${height}px` : undefined }}
         >
             <Box className="TerminalHeader">
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -215,14 +246,33 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ open, onClose }) => {
                 }}
             >
                 {entries.length === 0 ? (
-                    <Typography variant="body2" sx={{ color: 'var(--text-secondary)' }}>
-                        Run a command to see output.
+                    <Typography
+                        variant="body2"
+                        component="pre"
+                        sx={{
+                            color: 'var(--text-secondary)',
+                            fontFamily: 'monospace',
+                            whiteSpace: 'pre',
+                            m: 0,
+                            lineHeight: 1.2,
+                            display: 'block'
+                        }}
+                    >
+                        {terminalBanner}
                     </Typography>
                 ) : (
                     entries.map(e => (
                         <Box key={e.id} sx={{ mb: 1 }}>
                             <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
-                                <Typography variant="body2" sx={{ fontFamily: 'monospace', color: 'var(--text-primary)' }}>
+                                <Typography
+                                    variant="body2"
+                                    sx={{
+                                        fontFamily: 'monospace',
+                                        color: 'var(--text-primary)',
+                                        whiteSpace: 'pre-wrap',
+                                        overflowWrap: 'anywhere'
+                                    }}
+                                >
                                     {e.prompt} {e.command}
                                 </Typography>
                                 {e.status === 'running' && (
@@ -245,7 +295,15 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ open, onClose }) => {
                     ))
                 )}
                 <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mt: 1 }}>
-                    <Typography variant="body2" sx={{ fontFamily: 'monospace', color: 'var(--text-primary)' }}>
+                    <Typography
+                        variant="body2"
+                        sx={{
+                            fontFamily: 'monospace',
+                            color: 'var(--text-primary)',
+                            whiteSpace: 'pre-wrap',
+                            overflowWrap: 'anywhere'
+                        }}
+                    >
                         {prompt}
                     </Typography>
                     <Box

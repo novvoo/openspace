@@ -173,7 +173,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onFileClick }) => {
                             onChange={(e) => handleSearch(e.target.value)}
                             style={{
                                 width: '100%',
-                                background: 'rgba(255, 255, 255, 0.05)',
+                                background: 'var(--input-bg)',
                                 border: '1px solid var(--border-color)',
                                 borderRadius: '4px',
                                 padding: '4px 24px 4px 8px',
@@ -303,7 +303,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onFileClick }) => {
                             </div>
                         )}
                         {isSearching && (
-                            <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.2)', paddingLeft: '22px' }}>
+                            <div style={{ fontSize: '10px', color: 'var(--text-secondary)', paddingLeft: '22px', opacity: 0.7 }}>
                                 {file.path}
                             </div>
                         )}

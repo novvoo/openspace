@@ -130,7 +130,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onSelectSession, onShowConfig }) => {
                                     textOverflow: 'ellipsis',
                                     flex: 1
                                 }}>
-                                    {isRunning && <span style={{ color: '#4caf50', marginRight: '4px' }}>●</span>}
+                                    {isRunning && <span style={{ color: 'var(--success)', marginRight: '4px' }}>●</span>}
                                     {title}
                                 </div>
                                 <button

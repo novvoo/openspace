@@ -49,6 +49,22 @@ type Service struct {
 	cancelFuncsMux sync.Mutex
 }
 
+func splitProviderModel(model string) (string, string) {
+	if strings.Contains(model, "::") {
+		parts := strings.SplitN(model, "::", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
+			return parts[0], parts[1]
+		}
+	}
+	if strings.Contains(model, ":") {
+		parts := strings.SplitN(model, ":", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
+			return parts[0], parts[1]
+		}
+	}
+	return "", model
+}
+
 type CommandRunResult struct {
 	Output   string
 	Cwd      string
@@ -111,9 +127,12 @@ func (s *Service) loadSessions() {
 
 // saveSessions saves sessions to file
 func (s *Service) saveSessions() error {
-	s.sessionMux.Lock()
-	defer s.sessionMux.Unlock()
+	s.sessionMux.RLock()
+	defer s.sessionMux.RUnlock()
+	return s.saveSessionsLocked()
+}
 
+func (s *Service) saveSessionsLocked() error {
 	data, err := json.MarshalIndent(s.sessions, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal sessions: %w", err)
@@ -251,7 +270,7 @@ func (s *Service) UpdateSession(sessionID string, title string) (*Session, error
 	}
 
 	// Save after update
-	if err := s.saveSessions(); err != nil {
+	if err := s.saveSessionsLocked(); err != nil {
 		fmt.Printf("Warning: Failed to save session: %v\n", err)
 	}
 
@@ -335,6 +354,11 @@ func (s *Service) SendMessage(sessionID string, message string, model string, ag
 		s.cancelFuncsMux.Unlock()
 	}()
 
+	providerID, modelID := splitProviderModel(model)
+	if modelID != "" && modelID != model {
+		model = modelID
+	}
+
 	// Check if this model belongs to a custom service
 	if customServicesConfig, exists := s.config["customServices"]; exists {
 		if customServices, ok := customServicesConfig.([]interface{}); ok {
@@ -345,14 +369,24 @@ func (s *Service) SendMessage(sessionID string, message string, model string, ag
 						continue
 					}
 
+					serviceID, _ := svcMap["id"].(string)
+					if providerID != "" && serviceID != providerID {
+						continue
+					}
+
 					// Check if model exists in this service
 					if modelsList, ok := svcMap["models"].([]interface{}); ok {
 						for _, m := range modelsList {
 							if modelStr, ok := m.(string); ok && modelStr == model {
 								// Found the service for this model
-								serviceID, _ := svcMap["id"].(string)
-								return s.SendCustomLLMMessage(ctx, sessionID, message, serviceID)
+								return s.SendCustomLLMMessageWithModel(ctx, sessionID, message, serviceID, model)
 							}
+						}
+					}
+
+					if providerID != "" {
+						if defaultModel, ok := svcMap["defaultModel"].(string); ok && defaultModel == model {
+							return s.SendCustomLLMMessageWithModel(ctx, sessionID, message, serviceID, model)
 						}
 					}
 				}
@@ -363,39 +397,72 @@ func (s *Service) SendMessage(sessionID string, message string, model string, ag
 	// Check "providers" config (Legacy/Standard)
 	if providersConfig, exists := s.config["providers"]; exists {
 		if providersMap, ok := providersConfig.(map[string]interface{}); ok {
-			for id, pConfig := range providersMap {
-				if pData, ok := pConfig.(map[string]interface{}); ok {
-					// Check if model matches
-					providerModel, _ := pData["model"].(string)
-					if providerModel == model {
-						// Found match
-						baseURL, _ := pData["base_url"].(string)
-						// Fallback for common providers if base_url is missing
-						if baseURL == "" {
-							if strings.Contains(strings.ToLower(id), "openai") {
-								baseURL = "https://api.openai.com/v1/chat/completions"
-							} else if strings.Contains(strings.ToLower(id), "anthropic") {
-								baseURL = "https://api.anthropic.com/v1/messages"
+			if providerID != "" {
+				if pConfig, exists := providersMap[providerID]; exists {
+					if pData, ok := pConfig.(map[string]interface{}); ok {
+						providerModel, _ := pData["model"].(string)
+						if providerModel == model {
+							baseURL, _ := pData["base_url"].(string)
+							if baseURL == "" {
+								if strings.Contains(strings.ToLower(providerID), "openai") {
+									baseURL = "https://api.openai.com/v1/chat/completions"
+								} else if strings.Contains(strings.ToLower(providerID), "anthropic") {
+									baseURL = "https://api.anthropic.com/v1/messages"
+								}
 							}
-						}
 
-						apiKey, _ := pData["api_key"].(string)
-						name, _ := pData["name"].(string)
-						if name == "" {
-							name = id
-						}
+							apiKey, _ := pData["api_key"].(string)
+							name, _ := pData["name"].(string)
+							if name == "" {
+								name = providerID
+							}
 
-						customService := CustomLLMService{
-							ID:           id,
-							Name:         name,
-							BaseURL:      baseURL,
-							APIKey:       apiKey,
-							DefaultModel: providerModel,
-							AuthType:     "bearer", // Default to Bearer
-							Enabled:      true,
-						}
+							customService := CustomLLMService{
+								ID:           providerID,
+								Name:         name,
+								BaseURL:      baseURL,
+								APIKey:       apiKey,
+								DefaultModel: providerModel,
+								AuthType:     "bearer",
+								Enabled:      true,
+							}
 
-						return s.sendLLMMessageInternal(ctx, sessionID, message, customService, model)
+							return s.sendLLMMessageInternal(ctx, sessionID, message, customService, model)
+						}
+					}
+				}
+			} else {
+				for id, pConfig := range providersMap {
+					if pData, ok := pConfig.(map[string]interface{}); ok {
+						providerModel, _ := pData["model"].(string)
+						if providerModel == model {
+							baseURL, _ := pData["base_url"].(string)
+							if baseURL == "" {
+								if strings.Contains(strings.ToLower(id), "openai") {
+									baseURL = "https://api.openai.com/v1/chat/completions"
+								} else if strings.Contains(strings.ToLower(id), "anthropic") {
+									baseURL = "https://api.anthropic.com/v1/messages"
+								}
+							}
+
+							apiKey, _ := pData["api_key"].(string)
+							name, _ := pData["name"].(string)
+							if name == "" {
+								name = id
+							}
+
+							customService := CustomLLMService{
+								ID:           id,
+								Name:         name,
+								BaseURL:      baseURL,
+								APIKey:       apiKey,
+								DefaultModel: providerModel,
+								AuthType:     "bearer",
+								Enabled:      true,
+							}
+
+							return s.sendLLMMessageInternal(ctx, sessionID, message, customService, model)
+						}
 					}
 				}
 			}
@@ -502,7 +569,7 @@ func (s *Service) SendMessage(sessionID string, message string, model string, ag
 	session.UpdatedAt = now + 100
 
 	// Save after sending message
-	if err := s.saveSessions(); err != nil {
+	if err := s.saveSessionsLocked(); err != nil {
 		fmt.Printf("Warning: Failed to save session: %v\n", err)
 	}
 
@@ -923,6 +990,10 @@ func (s *Service) RunCommand(command string) (string, error) {
 }
 
 func (s *Service) RunCommandWithCwd(command string, cwd string) (CommandRunResult, error) {
+	return s.RunCommandWithCwdContext(context.Background(), command, cwd)
+}
+
+func (s *Service) RunCommandWithCwdContext(ctx context.Context, command string, cwd string) (CommandRunResult, error) {
 	if command == "" {
 		return CommandRunResult{}, fmt.Errorf("command parameter is required")
 	}
@@ -964,7 +1035,7 @@ func (s *Service) RunCommandWithCwd(command string, cwd string) (CommandRunResul
 		}
 	}
 
-	cmd := exec.Command(shell, args...)
+	cmd := exec.CommandContext(ctx, shell, args...)
 	hideCommandWindow(cmd)
 
 	cmd.Dir = baseDir
@@ -1117,6 +1188,10 @@ func (s *Service) GetFileStatus() (map[string]interface{}, error) {
 
 // FindFilesByName searches for files by name
 func (s *Service) FindFilesByName(query string, fileType string, limit int) ([]string, error) {
+	return s.FindFilesByNameContext(context.Background(), query, fileType, limit)
+}
+
+func (s *Service) FindFilesByNameContext(ctx context.Context, query string, fileType string, limit int) ([]string, error) {
 	if query == "" {
 		return nil, fmt.Errorf("query parameter is required")
 	}
@@ -1128,6 +1203,11 @@ func (s *Service) FindFilesByName(query string, fileType string, limit int) ([]s
 	err := filepath.Walk(wd, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 
 		// Skip hidden directories
@@ -1310,7 +1390,7 @@ func (s *Service) UpdateSessionTodos(sessionID string, todos []TodoItem) error {
 	session.Todos = todos
 	session.UpdatedAt = time.Now().UnixMilli()
 
-	return s.saveSessions()
+	return s.saveSessionsLocked()
 }
 
 // GetGitStatus returns git status
@@ -1487,16 +1567,17 @@ func (s *Service) SummarizeSession(sessionID string, providerID string, modelID 
 				}
 
 				for _, msg := range msgs {
-					msgInfo := msg["info"].(map[string]interface{})
-					msgParts := msg["parts"].([]interface{})
-
-					if len(msgParts) > 0 {
-						textPart := msgParts[0].(map[string]interface{})
-						messages = append(messages, map[string]interface{}{
-							"role":    msgInfo["role"],
-							"content": textPart["text"],
-						})
+					role, content, ok := normalizeStoredMessage(msg)
+					if !ok {
+						continue
 					}
+					if strings.TrimSpace(role) == "" {
+						continue
+					}
+					messages = append(messages, map[string]interface{}{
+						"role":    role,
+						"content": content,
+					})
 				}
 
 				// Add summary request
@@ -1511,7 +1592,7 @@ func (s *Service) SummarizeSession(sessionID string, providerID string, modelID 
 					// Save summary to session
 					s.sessionMux.Lock()
 					session.Summary = summary
-					s.saveSessions()
+					_ = s.saveSessionsLocked()
 					s.sessionMux.Unlock()
 
 					return map[string]interface{}{
